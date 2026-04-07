@@ -12,4 +12,10 @@ Post /api/auth/register - Register a new user
 // authRouter.post("/login", authController.login);
 authRouter.post("/register", authController.register);
 
+/*
+GET /api/auth/get-me - Get the current user
+*/
+
+authRouter.get("/get-me", authController.getMe);
+
 export default authRouter;
