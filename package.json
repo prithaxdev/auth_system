@@ -4,6 +4,13 @@
   "description": "",
   "main": "index.js",
   "type": "module",
+  "imports": {
+    "#config/*": "./src/config/*.js",
+    "#models/*": "./src/models/*.js",
+    "#controllers/*": "./src/controllers/*.js",
+    "#routes/*": "./src/routes/*.js",
+    "#src/*": "./src/*.js"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "npx nodemon server.js"

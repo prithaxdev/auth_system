@@ -1,6 +1,6 @@
 import express from "express";
 import morgan from "morgan";
-import authRouter from "./routes/auth.routes.js";
+import authRouter from "#routes/auth.routes";
 
 const app = express();
 

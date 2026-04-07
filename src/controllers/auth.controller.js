@@ -1,7 +1,7 @@
-import userModel from "../models/user.model.js";
+import userModel from "#models/user.model";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import config from "../config/config.js";
+import config from "#config/config";
 
 async function register(req, res) {
   const { username, email, password } = req.body;
