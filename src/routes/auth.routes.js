@@ -15,7 +15,11 @@ authRouter.post("/register", authController.register);
 /*
 GET /api/auth/get-me - Get the current user
 */
-
 authRouter.get("/get-me", authController.getMe);
+
+/*
+GET /api/auth/refresh-token - Refresh the access token
+*/
+authRouter.get("/refresh-token", authController.refreshToken);
 
 export default authRouter;
