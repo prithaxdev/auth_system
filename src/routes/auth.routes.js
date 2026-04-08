@@ -32,4 +32,9 @@ Get /api/auth/logout-all - Logout all devices
 */
 authRouter.get("/logout-all", authController.logoutAll);
 
+/*
+Get /api/auth/verify-email - Verify the user's email
+*/
+authRouter.get("/verify-email", authController.verifyEmail);
+
 export default authRouter;
