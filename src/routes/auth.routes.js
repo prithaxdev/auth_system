@@ -9,7 +9,7 @@ Post /api/auth/login - Login a user
 Post /api/auth/register - Register a new user
 */
 
-// authRouter.post("/login", authController.login);
+authRouter.post("/login", authController.login);
 authRouter.post("/register", authController.register);
 
 /*

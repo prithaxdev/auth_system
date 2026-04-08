@@ -68,6 +68,71 @@ async function register(req, res) {
   });
 }
 
+async function login(req, res) {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required" });
+  }
+
+  const user = await userModel.findOne({ email });
+
+  if (!user) {
+    return res.status(401).json({ message: "Invalid email or password" });
+  }
+
+  const hashedPassword = crypto
+    .createHash("sha256")
+    .update(password)
+    .digest("hex");
+
+  const isPasswordValid = hashedPassword === user.password;
+
+  if (!isPasswordValid) {
+    return res.status(401).json({ message: "Invalid email or password" });
+  }
+
+  const refreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
+    expiresIn: "7d",
+  });
+
+  const refreshTokenHash = crypto
+    .createHash("sha256")
+    .update(refreshToken)
+    .digest("hex");
+
+  const session = await sessionModel.create({
+    user: user._id,
+    refreshTokenHash,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
+  const accessToken = jwt.sign(
+    { id: user._id, session: session._id },
+    config.JWT_SECRET,
+    {
+      expiresIn: "15m",
+    },
+  );
+
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  });
+
+  res.status(200).json({
+    message: "Logged in successfully",
+    user: {
+      username: user.username,
+      email: user.email,
+    },
+    accessToken,
+  });
+}
+
 async function getMe(req, res) {
   const token = req.headers.authorization?.split(" ")[1];
 
@@ -199,4 +264,4 @@ async function logoutAll(req, res) {
   res.status(200).json({ message: "Logged out from all devices successfully" });
 }
 
-export { register, getMe, refreshToken, logout, logoutAll };
+export { register, getMe, login, refreshToken, logout, logoutAll };
