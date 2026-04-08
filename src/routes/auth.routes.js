@@ -22,4 +22,9 @@ GET /api/auth/refresh-token - Refresh the access token
 */
 authRouter.get("/refresh-token", authController.refreshToken);
 
+/*
+ Get /api/auth/logout - Logout the current user
+*/
+authRouter.get("/logout", authController.logout);
+
 export default authRouter;
