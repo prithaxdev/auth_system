@@ -26,6 +26,10 @@ if (!process.env.GOOGLE_USER) {
   throw new Error("GOOGLE_USER environment variable is not set");
 }
 
+if (!process.env.CLIENT_URL) {
+  throw new Error("CLIENT_URL environment variable is not set");
+}
+
 const config = {
   MONGO_URI: process.env.MONGO_URI,
   JWT_SECRET: process.env.JWT_SECRET,
@@ -33,6 +37,8 @@ const config = {
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN,
   GOOGLE_USER: process.env.GOOGLE_USER,
+  CLIENT_URL: process.env.CLIENT_URL,
+  PORT: process.env.PORT || 3000,
 };
 
 export default config;
