@@ -1,6 +1,6 @@
 # Auth System
 
-A production-ready authentication system built with **Node.js**, **Express**, and **MongoDB**. This project covers the full authentication lifecycle — from registration and email OTP verification to login, token management, session handling, and multi-device logout.
+A production-ready authentication system built with **Node.js**, **Express v5**, and **MongoDB**. Covers the full authentication lifecycle — registration, email OTP verification, login, token rotation, session management, multi-device logout, and password reset.
 
 ---
 
@@ -22,11 +22,16 @@ A production-ready authentication system built with **Node.js**, **Express**, an
   - [Session Management](#9-session-management)
   - [OTP (One-Time Password)](#10-otp-one-time-password)
   - [Email Verification Flow](#11-email-verification-flow)
-  - [Route Prefixes & REST Structure](#12-route-prefixes--rest-structure)
-  - [Middleware](#13-middleware)
+  - [Service Layer](#12-service-layer)
+  - [Middleware Layer](#13-middleware-layer)
+  - [Centralized Error Handling](#14-centralized-error-handling)
+  - [Input Validation](#15-input-validation)
+  - [Route Prefixes & REST Structure](#16-route-prefixes--rest-structure)
+  - [Forgot & Reset Password Flow](#17-forgot--reset-password-flow)
 - [Database Models](#database-models)
 - [API Reference](#api-reference)
 - [Auth Flow Diagrams](#auth-flow-diagrams)
+- [Security Summary](#security-summary)
 
 ---
 
@@ -34,26 +39,35 @@ A production-ready authentication system built with **Node.js**, **Express**, an
 
 ```
 auth_system/
-├── server.js                        # Entry point — starts server & connects DB
-├── .env                             # Environment variables (never commit this)
-├── package.json                     # Dependencies + Node.js imports map
+├── server.js                              # Entry point — starts server & connects DB
+├── .env                                   # Environment variables (never commit this)
+├── package.json                           # Dependencies + Node.js imports map
 └── src/
-    ├── app.js                       # Express app setup & middleware registration
+    ├── app.js                             # Express app setup, middleware, error handler
     ├── config/
-    │   ├── config.js                # Loads & validates all env vars
-    │   └── database.js              # Mongoose connection logic
+    │   ├── config.js                      # Loads & validates all env vars at startup
+    │   └── database.js                    # Mongoose connection logic
     ├── controllers/
-    │   └── auth.controller.js       # All auth business logic
+    │   └── auth.controller.js             # Thin req/res shell — delegates to services
+    ├── middleware/
+    │   ├── asyncHandler.js                # Wraps async fns, forwards errors to next()
+    │   ├── errorHandler.js                # Global 4-arg Express error handler
+    │   ├── protect.js                     # Verifies Bearer token, attaches req.user
+    │   └── validators/
+    │       └── auth.validators.js         # Per-route input validation middleware
     ├── models/
-    │   ├── user.model.js            # User schema
-    │   ├── session.model.js         # Session schema (refresh token store)
-    │   └── otp.model.js             # OTP schema
+    │   ├── user.model.js                  # User schema (+ password reset fields)
+    │   ├── session.model.js               # Session schema (refresh token store)
+    │   └── otp.model.js                   # OTP schema (with MongoDB TTL index)
     ├── routes/
-    │   └── auth.routes.js           # Route definitions for /api/auth
+    │   └── auth.routes.js                 # Route definitions for /api/auth
     ├── services/
-    │   └── email.service.js         # Nodemailer transporter & sendEmail()
+    │   ├── auth.service.js                # All business logic
+    │   ├── token.service.js               # JWT sign/verify, hashing, session ops
+    │   └── email.service.js               # Nodemailer transporter & sendEmail()
     └── utils/
-        └── utils.js                 # generateOTP() & getOtpHtml()
+        ├── AppError.js                    # Custom error class with statusCode
+        └── utils.js                       # generateOTP(), getOtpHtml(), getResetPasswordHtml()
 ```
 
 ---
@@ -64,11 +78,10 @@ auth_system/
 # Install dependencies
 pnpm install
 
-# Create your .env file
+# Create your .env file and fill in all required values
 cp .env.example .env
-# Fill in all required values
 
-# Start development server
+# Start development server (port defaults to 3000)
 pnpm dev
 ```
 
@@ -76,43 +89,48 @@ pnpm dev
 
 ## Environment Variables
 
-Create a `.env` file in the root. All of these are **required** — the app will throw and refuse to start if any are missing.
+Create a `.env` file in the root. All variables are **required** — the app throws and refuses to start if any are missing.
 
-| Variable              | Description                                      |
-|-----------------------|--------------------------------------------------|
-| `MONGO_URI`           | MongoDB connection string                        |
-| `JWT_SECRET`          | Secret key used to sign and verify JWTs          |
-| `GOOGLE_USER`         | Gmail address used to send emails                |
-| `GOOGLE_CLIENT_ID`    | Google OAuth2 client ID                          |
-| `GOOGLE_CLIENT_SECRET`| Google OAuth2 client secret                      |
-| `GOOGLE_REFRESH_TOKEN`| Google OAuth2 refresh token for Gmail API access |
+| Variable               | Description                                           |
+|------------------------|-------------------------------------------------------|
+| `MONGO_URI`            | MongoDB connection string                             |
+| `JWT_SECRET`           | Secret key used to sign and verify JWTs               |
+| `GOOGLE_USER`          | Gmail address used to send emails                     |
+| `GOOGLE_CLIENT_ID`     | Google OAuth2 client ID                               |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret                           |
+| `GOOGLE_REFRESH_TOKEN` | Google OAuth2 refresh token for Gmail API access      |
+| `CLIENT_URL`           | Frontend base URL (used in password reset email link) |
+| `PORT`                 | Server port (optional, defaults to 3000)              |
 
-> **Security tip:** Never commit `.env` to version control. It is already added to `.gitignore`.
+> **Security tip:** Never commit `.env` to version control. It is already in `.gitignore`.
 
 ---
 
 ## Packages & Why We Use Them
 
 ### `express`
-The core web framework. Handles routing, middleware chaining, request/response lifecycle. We use Express v5 which has built-in async error handling — no need to wrap every async route in a try/catch for unhandled promise rejections.
+Core web framework. Handles routing, middleware chaining, request/response lifecycle. We use Express v5 which propagates async errors automatically when an async function throws — this works together with our `asyncHandler` wrapper.
 
 ### `mongoose`
-ODM (Object Document Mapper) for MongoDB. Lets us define schemas with validation rules, types, and defaults — and interact with the database using JavaScript objects instead of raw queries. We use it for all three models: `users`, `sessions`, and `otps`.
+ODM for MongoDB. Lets us define schemas with validation, types, and defaults. Used for all three models: `users`, `sessions`, and `otps`.
 
 ### `dotenv`
-Loads environment variables from the `.env` file into `process.env` at startup. Without this, your secret keys and config values would have to be hardcoded or passed manually — both are bad practices.
+Loads environment variables from `.env` into `process.env` at startup. All values are then validated and re-exported through `src/config/config.js`.
 
 ### `jsonwebtoken`
-The library used to **sign** and **verify** JWTs. We use it to create access tokens (short-lived) and refresh tokens (long-lived) after login/register, and to verify them on protected routes.
+Signs and verifies JWTs. Used to create short-lived access tokens (15 min) and long-lived refresh tokens (7 days), and to verify them on protected routes.
+
+### `bcrypt`
+Adaptive password hashing with automatic salting. Used at cost factor 12 for all passwords and password resets. Unlike SHA-256, bcrypt is designed to be slow and resist brute-force and rainbow table attacks.
 
 ### `morgan`
-HTTP request logger middleware. Every incoming request is logged to the console with method, route, status code, and response time (e.g. `POST /api/auth/login 200 76ms`). Essential for debugging during development.
+HTTP request logger. Logs method, route, status code, and response time for every request. Essential for debugging.
 
 ### `cookie-parser`
-Middleware that parses the `Cookie` header and populates `req.cookies`. We store the refresh token in an HTTP-only cookie, so we need this to read it back on requests like `/refresh-token` and `/logout`.
+Parses the `Cookie` header and populates `req.cookies`. Required to read the refresh token from the HTTP-only cookie on `/refresh-token` and `/logout`.
 
 ### `nodemailer`
-Node.js library for sending emails. We use it with Gmail via **OAuth2** (not a plain password) to send OTP verification emails to new users. OAuth2 is used instead of a plain password because it is more secure and Google no longer allows less-secure app passwords by default.
+Sends emails via Gmail using **OAuth2** (not a plain password). Used for OTP verification emails and password reset emails.
 
 ---
 
@@ -122,7 +140,7 @@ Node.js library for sending emails. We use it with Gmail via **OAuth2** (not a p
 
 **File:** `src/config/config.js`
 
-Rather than accessing `process.env.X` scattered across the codebase, all environment variables are loaded, validated, and exported from a single `config.js` file. If a required variable is missing, the app **throws immediately at startup** — this is called a **fail-fast** pattern. It prevents the server from running in a broken state where, for example, it cannot connect to the database or sign tokens.
+All environment variables are loaded, validated, and exported from a single config file. If any required variable is missing, the app **throws immediately at startup** (fail-fast pattern). This prevents the server from running in a broken state.
 
 ```js
 if (!process.env.JWT_SECRET) {
@@ -130,53 +148,49 @@ if (!process.env.JWT_SECRET) {
 }
 ```
 
-This means you will never get a silent failure at runtime — the problem is surfaced immediately.
-
 ---
 
 ### 2. Absolute Path Aliases
 
 **File:** `package.json` → `"imports"` field
 
-In a Node.js ESM project, relative imports like `../../../config/config.js` get messy and break when files are moved. We use Node's native **subpath imports** feature to define clean aliases:
+Node.js native subpath imports replace messy relative paths with clean aliases:
 
 ```json
 "imports": {
-  "#config/*": "./src/config/*.js",
-  "#models/*": "./src/models/*.js",
-  "#controllers/*": "./src/controllers/*.js",
-  "#routes/*": "./src/routes/*.js",
-  "#src/*": "./src/*.js"
+  "#config/*":     "./src/config/*.js",
+  "#models/*":     "./src/models/*.js",
+  "#controllers/*":"./src/controllers/*.js",
+  "#routes/*":     "./src/routes/*.js",
+  "#middleware/*": "./src/middleware/*.js",
+  "#services/*":   "./src/services/*.js",
+  "#utils/*":      "./src/utils/*.js",
+  "#src/*":        "./src/*.js"
 }
 ```
 
-Now instead of:
+Usage:
 ```js
-import config from "../../../config/config.js"
+import config from "#config/config";
+import AppError from "#utils/AppError";
 ```
 
-We write:
-```js
-import config from "#config/config"
-```
-
-> **Important:** Because the alias already maps to `.js` files, you must **not** add `.js` to the import — doing so would result in `config.js.js` and a module-not-found error.
-
-This is zero-dependency (no build tools required) and works natively in Node.js 12+.
+> Do **not** add `.js` to the alias import — the alias already maps to `.js` files.
 
 ---
 
 ### 3. Password Hashing
 
-**Algorithm:** SHA-256 (via Node's built-in `crypto` module)
+**Algorithm:** bcrypt (cost factor 12)
 
-Passwords must **never** be stored as plain text. We hash the password before saving it to the database. Hashing is a one-way function — you cannot reverse a hash back to the original password. To verify a login, we hash the incoming password and compare it to the stored hash.
+Passwords are never stored as plain text. bcrypt hashes passwords with an automatic random salt and is intentionally slow, making brute-force attacks expensive.
 
 ```js
-const hashedPassword = crypto.createHash("sha256").update(password).digest("hex");
+const hashed = await bcrypt.hash(password, 12);
+const isValid = await bcrypt.compare(inputPassword, hashed);
 ```
 
-The same approach is used for OTP hashes and refresh token hashes — any sensitive value that needs to be stored but never read back in plain form.
+Refresh token hashes and OTP hashes still use SHA-256 (via Node's built-in `crypto`) since those are random high-entropy values, not user-chosen secrets.
 
 ---
 
@@ -184,21 +198,11 @@ The same approach is used for OTP hashes and refresh token hashes — any sensit
 
 **Package:** `jsonwebtoken`
 
-A **JWT** (JSON Web Token) is a compact, URL-safe token that encodes a JSON payload and is cryptographically signed. It has three parts separated by dots:
-
-```
-header.payload.signature
-```
-
-- **Header** — algorithm and token type
-- **Payload** — the data (e.g. `{ id: "user123", sessionId: "abc" }`)
-- **Signature** — HMAC-SHA256 of header + payload using the `JWT_SECRET`
-
-The server signs the token with `JWT_SECRET`. Anyone can decode the payload, but only the server can **verify** the signature. If someone tampers with the payload, the signature becomes invalid.
+A JWT encodes a JSON payload and is cryptographically signed. Three parts separated by dots: `header.payload.signature`. Anyone can decode the payload, but only the server can verify the signature using `JWT_SECRET`.
 
 ```js
 // Signing
-const token = jwt.sign({ id: user._id }, config.JWT_SECRET, { expiresIn: "15m" });
+const token = jwt.sign({ id: user._id, session: session._id }, config.JWT_SECRET, { expiresIn: "15m" });
 
 // Verifying
 const decoded = jwt.verify(token, config.JWT_SECRET);
@@ -208,178 +212,215 @@ const decoded = jwt.verify(token, config.JWT_SECRET);
 
 ### 5. Access Token
 
-**Expiry:** `15 minutes`  
-**Sent via:** `Authorization: Bearer <token>` header  
-**Purpose:** Proves the user is authenticated for a short window of time
+**Expiry:** 15 minutes
+**Sent via:** `Authorization: Bearer <token>` header
+**Payload:** `{ id, session }`
 
-The access token is a short-lived JWT sent in the response body after a successful login or register. The client stores it in memory (not localStorage — that is vulnerable to XSS) and attaches it to every protected API request.
-
-Because it expires quickly (15 minutes), even if it is stolen, the attacker has a very limited window to use it.
+Short-lived JWT returned in the response body after login. The client stores it in memory (not localStorage — vulnerable to XSS) and attaches it to every protected request. Short expiry limits the damage window if stolen.
 
 ---
 
 ### 6. Refresh Token
 
-**Expiry:** `7 days`  
-**Sent via:** HTTP-only cookie  
-**Purpose:** Used to silently obtain a new access token without re-logging in
+**Expiry:** 7 days
+**Sent via:** HTTP-only cookie
+**Payload:** `{ id }`
 
-The refresh token is a long-lived JWT. When the access token expires, the client calls `GET /api/auth/refresh-token`. The server reads the refresh token from the cookie, validates it against the database session, and issues a new access + refresh token pair.
-
-The refresh token is **never** sent in the response body — only in an HTTP-only cookie. This prevents JavaScript from ever reading it, protecting against XSS attacks.
+Long-lived JWT stored in an HTTP-only cookie. Used exclusively to get a new access token when the current one expires. Never returned in the response body — JavaScript cannot read HTTP-only cookies.
 
 ---
 
 ### 7. Token Rotation
 
-Every time `GET /api/auth/refresh-token` is called, both tokens are replaced:
+Every call to `POST /refresh-token` replaces both tokens:
+1. New access token is issued
+2. New refresh token is issued
+3. The old refresh token hash in the session is **overwritten**
 
-1. A new access token is issued
-2. A new refresh token is issued
-3. The old refresh token hash in the database is **overwritten** with the new one
-
-This is called **refresh token rotation**. If a refresh token is stolen and used, the legitimate user's next refresh will fail (because the hash no longer matches), alerting to a potential breach. The old token is immediately invalidated.
+If a refresh token is stolen and used, the legitimate user's next refresh fails (hash mismatch), signalling a potential breach.
 
 ---
 
 ### 8. HTTP-Only Cookies
 
-**Set with:**
 ```js
-res.cookie("refreshToken", refreshToken, {
-  httpOnly: true,   // JS cannot access this cookie (XSS protection)
-  secure: true,     // Only sent over HTTPS
-  sameSite: "strict", // Not sent on cross-site requests (CSRF protection)
-  maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
+res.cookie("refreshToken", token, {
+  httpOnly: true,       // JS cannot access this cookie (XSS protection)
+  secure: true,         // Only sent over HTTPS
+  sameSite: "strict",   // Not sent on cross-site requests (CSRF protection)
+  maxAge: 7 * 24 * 60 * 60 * 1000
 });
 ```
 
-| Flag        | Why it matters                                                     |
+| Flag        | Why it matters                                                      |
 |-------------|---------------------------------------------------------------------|
-| `httpOnly`  | JavaScript (including malicious scripts) cannot read this cookie    |
-| `secure`    | Cookie only transmitted over encrypted HTTPS connections            |
-| `sameSite`  | Prevents the cookie from being sent in cross-origin requests (CSRF) |
-| `maxAge`    | Cookie auto-expires after 7 days                                    |
+| `httpOnly`  | Blocks JavaScript — including injected scripts — from reading it    |
+| `secure`    | Only transmitted over HTTPS                                         |
+| `sameSite`  | Prevents the cookie from being sent in cross-origin CSRF requests   |
+| `maxAge`    | Auto-expires after 7 days                                           |
 
 ---
 
 ### 9. Session Management
 
-**Model:** `src/models/session.model.js`
+**File:** `src/models/session.model.js`
 
-Instead of storing the raw refresh token, we store a **SHA-256 hash** of it in a `sessions` collection in MongoDB. Each session document contains:
+Each login creates a session document in MongoDB storing a **SHA-256 hash** of the refresh token (never the raw token). This enables:
+- **Single-device logout** — revoke just that session
+- **All-device logout** — mark all sessions for a user as `revoked: true`
+- **Token reuse detection** — hash mismatch = invalid token
 
 | Field              | Purpose                                               |
 |--------------------|-------------------------------------------------------|
-| `user`             | Reference to the user who owns this session           |
+| `user`             | Reference to the owner                                |
 | `refreshTokenHash` | SHA-256 hash of the refresh token                     |
-| `ip`               | IP address at time of login                           |
-| `userAgent`        | Browser/client info at time of login                  |
+| `ip`               | IP at login time                                      |
+| `userAgent`        | Browser/client info at login time                     |
 | `revoked`          | Whether this session has been invalidated             |
-| `timestamps`       | Auto-managed `createdAt` and `updatedAt`              |
-
-This allows us to:
-- **Logout a single device** — revoke just that one session
-- **Logout all devices** — mark all of a user's sessions as `revoked: true`
-- **Detect token reuse** — if the hash doesn't match any active session, the token is invalid
 
 ---
 
 ### 10. OTP (One-Time Password)
 
-**Model:** `src/models/otp.model.js`  
-**Generator:** `src/utils/utils.js` → `generateOTP()`
+**File:** `src/models/otp.model.js`, `src/utils/utils.js`
 
-An OTP is a randomly generated 6-digit number that is valid for a single use. We generate it like this:
-
+A 6-digit number generated as:
 ```js
-const otp = Math.floor(100000 + Math.random() * 900000).toString();
+Math.floor(100000 + Math.random() * 900000).toString();
 ```
 
-This guarantees a 6-digit number (100000–999999). The OTP itself is never stored — only its **SHA-256 hash** is saved in the database. When the user submits the OTP, we hash their input and compare it to the stored hash.
-
-```js
-const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-```
-
-This means even if the `otps` collection were leaked, attackers could not reverse the OTPs.
+Only the SHA-256 hash is stored. The OTP document has a `expiresAt` field with a **MongoDB TTL index** that auto-deletes documents after 10 minutes. The application also checks `expiresAt > new Date()` as a defence-in-depth measure (MongoDB TTL task runs every ~60s).
 
 ---
 
 ### 11. Email Verification Flow
 
-**Service:** `src/services/email.service.js`  
-**Template:** `src/utils/utils.js` → `getOtpHtml()`
-
-Registration is a two-step process:
+New users cannot login until their email is verified. Registration is a two-step process:
 
 ```
-Step 1 — POST /api/auth/register
+Step 1 — POST /register
   → Create user (isVerified: false)
-  → Generate OTP
-  → Hash OTP and store in otps collection
-  → Send OTP email via nodemailer (Gmail OAuth2)
-  → Return success (no tokens yet)
+  → Generate OTP, hash and store it
+  → Send OTP email via Nodemailer (Gmail OAuth2)
+  → Return 201
 
-Step 2 — GET /api/auth/verify-email
-  → Receive { email, otp } from client
-  → Hash the submitted OTP
-  → Look up matching document in otps collection
+Step 2 — POST /verify-email
+  → Hash submitted OTP, find match in DB
+  → Check expiresAt is not past
   → Set user.isVerified = true
   → Delete all OTP records for this user
-  → Return success
+  → Return 200
 ```
-
-The user **cannot login** until `isVerified` is `true`. This prevents fake/throwaway email registrations and confirms the user owns the email address.
-
-Gmail is used with **OAuth2** authentication (not a plain app password) via `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REFRESH_TOKEN`. This is the secure, modern way to send emails via Gmail.
 
 ---
 
-### 12. Route Prefixes & REST Structure
+### 12. Service Layer
 
-**File:** `src/app.js`
+**Files:** `src/services/auth.service.js`, `src/services/token.service.js`
 
-All auth routes are mounted under the `/api/auth` prefix:
+All business logic lives in services, not controllers. Controllers are thin — they only handle HTTP concerns (reading `req`, writing `res`). This separation makes each piece independently testable.
 
-```js
-app.use("/api/auth", authRouter);
-```
-
-This is the **route prefix** — it means every route defined in `authRouter` is automatically namespaced under `/api/auth`. This is a REST convention that keeps routes organized and allows versioning later (e.g. `/api/v2/auth`).
-
-Full route table:
-
-| Method | Route                       | Description                          |
-|--------|-----------------------------|--------------------------------------|
-| POST   | `/api/auth/register`        | Register new user, send OTP email    |
-| GET    | `/api/auth/verify-email`    | Verify email with OTP                |
-| POST   | `/api/auth/login`           | Login, issue tokens, create session  |
-| GET    | `/api/auth/get-me`          | Get current user from access token   |
-| GET    | `/api/auth/refresh-token`   | Rotate tokens using refresh cookie   |
-| GET    | `/api/auth/logout`          | Revoke current session               |
-| GET    | `/api/auth/logout-all`      | Revoke all sessions for the user     |
+- **`auth.service.js`** — register, login, verify email, refresh token, logout, forgot/reset password
+- **`token.service.js`** — JWT sign/verify, SHA-256 hashing, session creation, token rotation, cookie helper
 
 ---
 
-### 13. Middleware
+### 13. Middleware Layer
 
-**File:** `src/app.js`
+**Files:** `src/middleware/`
 
-Middleware are functions that run on every request **before** it reaches the route handler. They are registered with `app.use()` in order.
+| Middleware          | Purpose                                                        |
+|---------------------|----------------------------------------------------------------|
+| `asyncHandler.js`   | Wraps any async route fn and forwards thrown errors to `next()` |
+| `protect.js`        | Verifies Bearer token, loads user from DB, attaches to `req.user` |
+| `errorHandler.js`   | Global 4-arg error handler mounted last in `app.js`            |
+| `validators/`       | Per-route input validation — rejects malformed requests early  |
+
+---
+
+### 14. Centralized Error Handling
+
+**File:** `src/middleware/errorHandler.js`
+
+A single 4-argument Express error handler catches everything:
+
+| Error type               | Response                                      |
+|--------------------------|-----------------------------------------------|
+| `AppError` (operational) | `err.statusCode` + `err.message`              |
+| `JsonWebTokenError`      | 401 "Invalid token"                           |
+| `TokenExpiredError`      | 401 "Token has expired"                       |
+| Mongoose `ValidationError` | 400 with field messages                     |
+| Mongoose duplicate key (`11000`) | 409 with field name                 |
+| Everything else          | 500 "Something went wrong" (logged to console)|
+
+**File:** `src/utils/AppError.js`
 
 ```js
-app.use(express.json());   // 1. Parse JSON bodies
-app.use(morgan("dev"));    // 2. Log requests
-app.use(cookieParser());   // 3. Parse cookies
-app.use("/api/auth", authRouter); // 4. Route to auth handlers
+throw new AppError("Email is not verified", 401);
 ```
 
-| Middleware        | What it does                                                                 |
-|-------------------|-------------------------------------------------------------------------------|
-| `express.json()`  | Parses incoming `Content-Type: application/json` request bodies into `req.body` |
-| `morgan("dev")`   | Logs every request: method, route, status, response time. `"dev"` = colored output |
-| `cookieParser()`  | Parses `Cookie` header into `req.cookies` object so we can read `req.cookies.refreshToken` |
+`AppError` carries a `statusCode` and `isOperational: true` flag. Operational errors are user-facing (wrong password, not found). Non-operational errors are bugs and get a generic 500.
+
+---
+
+### 15. Input Validation
+
+**File:** `src/middleware/validators/auth.validators.js`
+
+Each route has its own validation middleware that runs before the controller. All field errors are collected and returned together in a single 400 response — no external validation library required.
+
+| Validator               | Rules                                                     |
+|-------------------------|-----------------------------------------------------------|
+| `validateRegister`      | username 3–30 chars; valid email format; password ≥ 8 chars |
+| `validateLogin`         | email non-empty; password non-empty                        |
+| `validateVerifyEmail`   | otp exactly 6 digits; email non-empty                      |
+| `validateForgotPassword`| valid email format                                         |
+| `validateResetPassword` | token in params non-empty; password ≥ 8 chars              |
+
+---
+
+### 16. Route Prefixes & REST Structure
+
+All routes are mounted under `/api/auth`. HTTP methods follow REST semantics — state-changing operations use POST, not GET.
+
+| Method | Route                      | Middleware             | Description                          |
+|--------|----------------------------|------------------------|--------------------------------------|
+| POST   | `/api/auth/register`       | validateRegister       | Register new user, send OTP email    |
+| POST   | `/api/auth/verify-email`   | validateVerifyEmail    | Verify email with OTP                |
+| POST   | `/api/auth/login`          | validateLogin          | Login, issue tokens, create session  |
+| GET    | `/api/auth/get-me`         | protect                | Get current user from access token   |
+| POST   | `/api/auth/refresh-token`  | —                      | Rotate tokens using refresh cookie   |
+| POST   | `/api/auth/logout`         | —                      | Revoke current session               |
+| POST   | `/api/auth/logout-all`     | protect                | Revoke all sessions for this user    |
+| POST   | `/api/auth/forgot-password`| validateForgotPassword | Send password reset email            |
+| POST   | `/api/auth/reset-password/:token` | validateResetPassword | Reset password with token    |
+
+---
+
+### 17. Forgot & Reset Password Flow
+
+```
+Step 1 — POST /forgot-password
+  → Find user by email (silently return if not found — no enumeration)
+  → Generate crypto.randomBytes(32) raw token
+  → Hash and store on user doc with 1-hour expiry
+  → Build reset link: CLIENT_URL/reset-password/<rawToken>
+  → Send reset email
+  → On email failure: clear stored token, throw 500
+
+Step 2 — POST /reset-password/:token
+  → Hash token from URL params
+  → Find user where hash matches AND expiry is in the future
+  → bcrypt.hash new password at cost 12
+  → Clear passwordResetToken + passwordResetExpires
+  → Revoke all active sessions (force re-login on all devices)
+  → Return 200
+```
+
+Security notes:
+- The raw token is only ever in the email link, never stored
+- Only the SHA-256 hash is stored in the database
+- Successful reset invalidates all existing sessions
 
 ---
 
@@ -387,12 +428,14 @@ app.use("/api/auth", authRouter); // 4. Route to auth handlers
 
 ### User Model (`users`)
 
-| Field        | Type    | Notes                          |
-|--------------|---------|--------------------------------|
-| `username`   | String  | Required, unique               |
-| `email`      | String  | Required, unique               |
-| `password`   | String  | SHA-256 hashed, required       |
-| `isVerified` | Boolean | Defaults to `false`            |
+| Field                  | Type    | Notes                                  |
+|------------------------|---------|----------------------------------------|
+| `username`             | String  | Required, unique                       |
+| `email`                | String  | Required, unique                       |
+| `password`             | String  | bcrypt hashed, required                |
+| `isVerified`           | Boolean | Defaults to `false`                    |
+| `passwordResetToken`   | String  | SHA-256 hash of reset token (optional) |
+| `passwordResetExpires` | Date    | Expiry of reset token (optional)       |
 
 ### Session Model (`sessions`)
 
@@ -408,56 +451,70 @@ app.use("/api/auth", authRouter); // 4. Route to auth handlers
 
 ### OTP Model (`otps`)
 
-| Field      | Type     | Notes                          |
-|------------|----------|--------------------------------|
-| `email`    | String   | Required                       |
-| `user`     | ObjectId | Ref to `users`                 |
-| `otpHash`  | String   | SHA-256 hash of the OTP        |
-| `createdAt`| Date     | Auto via `timestamps: true`    |
+| Field       | Type     | Notes                                           |
+|-------------|----------|-------------------------------------------------|
+| `email`     | String   | Required                                        |
+| `user`      | ObjectId | Ref to `users`                                  |
+| `otpHash`   | String   | SHA-256 hash of the OTP                         |
+| `expiresAt` | Date     | TTL index — document auto-deleted after 10 min  |
+| `createdAt` | Date     | Auto via `timestamps: true`                     |
 
 ---
 
 ## API Reference
 
 ### `POST /api/auth/register`
-**Body:** `{ username, email, password }`  
-Creates a new user, generates a 6-digit OTP, stores its hash, and sends a verification email. Returns the user object. No tokens are issued yet.
+**Body:** `{ username, email, password }`
+Creates user, generates and emails a 6-digit OTP. Returns 201 with user object. No tokens issued yet — email must be verified first.
 
 ---
 
-### `GET /api/auth/verify-email`
-**Body:** `{ email, otp }`  
-Hashes the submitted OTP and matches it against the database. On success, sets `isVerified: true` and clears all OTP records for that user.
+### `POST /api/auth/verify-email`
+**Body:** `{ email, otp }`
+Hashes the OTP and matches against the database. Checks expiry. On success sets `isVerified: true` and deletes all OTP records for this user.
 
 ---
 
 ### `POST /api/auth/login`
-**Body:** `{ email, password }`  
-Validates credentials. Blocks unverified users. On success, creates a session, issues an access token (response body) and a refresh token (HTTP-only cookie).
+**Body:** `{ email, password }`
+Validates credentials with bcrypt. Blocks unverified accounts. Creates a session, returns access token in body and refresh token as an HTTP-only cookie.
 
 ---
 
 ### `GET /api/auth/get-me`
-**Header:** `Authorization: Bearer <accessToken>`  
-Decodes the access token and returns the authenticated user's profile.
+**Header:** `Authorization: Bearer <accessToken>`
+Verifies token, loads user from DB, returns user object. User is attached to `req.user` by the `protect` middleware.
 
 ---
 
-### `GET /api/auth/refresh-token`
-**Cookie:** `refreshToken`  
-Verifies the refresh token cookie, checks the session in the database, rotates both tokens, and updates the session hash.
+### `POST /api/auth/refresh-token`
+**Cookie:** `refreshToken`
+Verifies refresh token, checks active session in DB, rotates both tokens, updates session hash.
 
 ---
 
-### `GET /api/auth/logout`
-**Cookie:** `refreshToken`  
-Finds the matching session by token hash and sets `revoked: true`. Clears the refresh token cookie.
+### `POST /api/auth/logout`
+**Cookie:** `refreshToken`
+Finds session by token hash, sets `revoked: true`, clears cookie.
 
 ---
 
-### `GET /api/auth/logout-all`
-**Cookie:** `refreshToken`  
-Decodes the refresh token to get the user ID, then revokes **all** active sessions for that user across every device.
+### `POST /api/auth/logout-all`
+**Header:** `Authorization: Bearer <accessToken>`
+Revokes all active sessions for the authenticated user across all devices.
+
+---
+
+### `POST /api/auth/forgot-password`
+**Body:** `{ email }`
+Sends a password reset link to the email if it exists. Always returns 200 to prevent email enumeration.
+
+---
+
+### `POST /api/auth/reset-password/:token`
+**Params:** `token` (from email link)
+**Body:** `{ password }`
+Validates token and expiry, hashes new password with bcrypt, clears reset fields, revokes all sessions.
 
 ---
 
@@ -469,20 +526,21 @@ Decodes the refresh token to get the user ID, then revokes **all** active sessio
 Client                        Server                        DB / Email
   |                              |                              |
   |-- POST /register ----------->|                              |
-  |   { username, email, pass }  |-- hash password              |
+  |   { username, email, pass }  |-- bcrypt.hash(password)      |
   |                              |-- create user -------------->|
   |                              |-- generate OTP               |
-  |                              |-- hash OTP                   |
+  |                              |-- hash OTP (SHA-256)         |
   |                              |-- store OTP hash ----------->|
   |                              |-- send OTP email ----------->|
   |<-- 201 { user } -------------|                              |
   |                              |                              |
-  |-- GET /verify-email -------->|                              |
+  |-- POST /verify-email ------->|                              |
   |   { email, otp }             |-- hash submitted OTP         |
   |                              |-- find OTP doc in DB ------->|
+  |                              |-- check expiresAt            |
   |                              |-- set isVerified = true ---->|
   |                              |-- delete OTP docs ---------->|
-  |<-- 200 { user } -------------|                              |
+  |<-- 200 ----------------------|                              |
 ```
 
 ### Login & Token Usage
@@ -491,20 +549,21 @@ Client                        Server                        DB / Email
 Client                        Server                        DB
   |                              |                              |
   |-- POST /login -------------->|                              |
-  |   { email, password }        |-- validate credentials ----->|
+  |   { email, password }        |-- bcrypt.compare ----------->|
   |                              |-- create session ----------->|
   |                              |-- sign accessToken (15m)     |
   |                              |-- sign refreshToken (7d)     |
-  |<-- 200 { accessToken }  -----|                              |
+  |<-- 200 { accessToken } ------|                              |
   |    Set-Cookie: refreshToken  |                              |
   |                              |                              |
   |-- GET /get-me -------------->|                              |
-  |   Authorization: Bearer ...  |-- verify accessToken         |
+  |   Authorization: Bearer ...  |-- protect middleware         |
+  |                              |-- verify token, load user -->|
   |<-- 200 { user } -------------|                              |
   |                              |                              |
-  |  [15 min later, token expires]                              |
+  |  [access token expires]      |                              |
   |                              |                              |
-  |-- GET /refresh-token ------->|                              |
+  |-- POST /refresh-token ------->|                              |
   |   Cookie: refreshToken       |-- verify token               |
   |                              |-- find session in DB ------->|
   |                              |-- rotate both tokens         |
@@ -513,16 +572,40 @@ Client                        Server                        DB
   |    Set-Cookie: newRefreshToken                              |
 ```
 
+### Forgot & Reset Password
+
+```
+Client                        Server                        DB / Email
+  |                              |                              |
+  |-- POST /forgot-password ---->|                              |
+  |   { email }                  |-- find user by email ------->|
+  |                              |-- randomBytes(32) rawToken   |
+  |                              |-- store hash + expiry ------>|
+  |                              |-- send reset email --------->|
+  |<-- 200 (generic message) ----|                              |
+  |                              |                              |
+  |-- POST /reset-password/:tok->|                              |
+  |   { password }               |-- hash token from params     |
+  |                              |-- find user, check expiry -->|
+  |                              |-- bcrypt.hash new password   |
+  |                              |-- clear reset fields ------->|
+  |                              |-- revoke all sessions ------>|
+  |<-- 200 ----------------------|                              |
+```
+
 ---
 
 ## Security Summary
 
-| Threat          | Mitigation                                                   |
-|-----------------|--------------------------------------------------------------|
-| XSS             | Refresh token in `httpOnly` cookie — JS cannot access it     |
-| CSRF            | `sameSite: strict` on cookie, short-lived access tokens      |
-| Token theft     | Access tokens expire in 15 min, refresh rotation invalidates stolen tokens |
-| Password leak   | Passwords are SHA-256 hashed before storage                  |
-| Fake emails     | Email OTP verification required before login is allowed      |
-| DB token leak   | Only token hashes are stored, never raw tokens               |
-| Missing config  | Fail-fast config validation at startup                       |
+| Threat                 | Mitigation                                                         |
+|------------------------|--------------------------------------------------------------------|
+| XSS                    | Refresh token in `httpOnly` cookie — JS cannot read it            |
+| CSRF                   | `sameSite: strict` cookie + short-lived access tokens             |
+| Token theft            | 15-min access tokens; refresh rotation invalidates stolen tokens  |
+| Brute-force passwords  | bcrypt cost factor 12 — slow by design, salted automatically      |
+| Rainbow tables         | bcrypt automatic per-password salt                                |
+| Email enumeration      | Forgot-password always returns 200 regardless of email existence  |
+| Fake email registration| OTP verification required before login is allowed                 |
+| DB token leak          | Only SHA-256 hashes stored, never raw tokens or passwords in plain|
+| Multi-device breach    | logout-all + password reset both revoke all active sessions       |
+| Missing config         | Fail-fast validation at startup — server won't start if misconfigured |

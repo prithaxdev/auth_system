@@ -1,40 +1,28 @@
 import { Router } from "express";
 import * as authController from "#controllers/auth.controller";
+import protect from "#middleware/protect";
+import {
+  validateRegister,
+  validateLogin,
+  validateVerifyEmail,
+  validateForgotPassword,
+  validateResetPassword,
+} from "#middleware/validators/auth.validators";
 
 const authRouter = Router();
 
-/*
-/api/auth -> prefix for all auth routes
-Post /api/auth/login - Login a user
-Post /api/auth/register - Register a new user
-*/
-
-authRouter.post("/login", authController.login);
-authRouter.post("/register", authController.register);
-
-/*
-GET /api/auth/get-me - Get the current user
-*/
-authRouter.get("/get-me", authController.getMe);
-
-/*
-GET /api/auth/refresh-token - Refresh the access token
-*/
-authRouter.get("/refresh-token", authController.refreshToken);
-
-/*
- Get /api/auth/logout - Logout the current user
-*/
-authRouter.get("/logout", authController.logout);
-
-/*
-Get /api/auth/logout-all - Logout all devices
-*/
-authRouter.get("/logout-all", authController.logoutAll);
-
-/*
-Get /api/auth/verify-email - Verify the user's email
-*/
-authRouter.get("/verify-email", authController.verifyEmail);
+authRouter.post("/register", validateRegister, authController.register);
+authRouter.post("/login", validateLogin, authController.login);
+authRouter.get("/get-me", protect, authController.getMe);
+authRouter.post("/verify-email", validateVerifyEmail, authController.verifyEmail);
+authRouter.post("/refresh-token", authController.refreshToken);
+authRouter.post("/logout", authController.logout);
+authRouter.post("/logout-all", protect, authController.logoutAll);
+authRouter.post("/forgot-password", validateForgotPassword, authController.forgotPassword);
+authRouter.post(
+  "/reset-password/:token",
+  validateResetPassword,
+  authController.resetPassword,
+);
 
 export default authRouter;

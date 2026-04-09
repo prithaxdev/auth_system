@@ -1,10 +1,9 @@
 import app from "#src/app";
 import { connectDB } from "#config/database";
-
-const port = 3000;
+import config from "#config/config";
 
 connectDB();
 
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+app.listen(config.PORT, () => {
+  console.log(`Server is running on port ${config.PORT}`);
 });
